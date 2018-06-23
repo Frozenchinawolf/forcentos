@@ -1,37 +1,82 @@
-import sys
-
-import pymc3 as pm
-import theano.tensor as tt
 import numpy as np
-
+from pyDOE import *
 import matplotlib.pyplot as plt
-# set the seed
-np.random.seed(1)
+from mpl_toolkits.mplot3d import Axes3D
+import pymc3 as pm
+from matplotlib import cm
+#x为n行2列的数据
+def f_z(x,n):
+    e=np.random.normal(loc=0,scale=0.1,size=n)
+    # print(e)
+    return 1.04+3.02*x[:,0]**3+2.01*x[:,1]**3+np.sin(x[:,0]*x[:,1]/4)+e
 
-n = 100 # The number of data points
-X = np.linspace(0, 10, n)[:, None] # The inputs to the GP, they must be arranged as a column vector
+def f_y(x,theta,n):
+    return 1+3*x[:,0]**3+2*x[:,1]**3+theta*x[:,0]*x[:,1]
 
-# Define the true covariance function and its parameters
-ℓ_true = 1.0
-η_true = 3.0
-cov_func = η_true**2 * pm.gp.cov.Matern52(1, ℓ_true)
+def gen_z(n=10):
+    x=lhs(2,n)
+    return x,f_z(x,n)
 
-# A mean function that is zero everywhere
-mean_func = pm.gp.mean.Zero()
+def gen_y(theta=0.5,n=40):
+    x=lhs(2,n)
+    return x,f_y(x,theta,n)
 
-# The latent function values are one sample from a multivariate normal
-# Note that we have to call `eval()` because PyMC3 built on top of Theano
-f_true = np.random.multivariate_normal(mean_func(X).eval(),
-                                       cov_func(X).eval() + 1e-8*np.eye(n), 1).flatten()
+def draw():
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
 
-# The observed data is the latent function plus a small amount of T distributed noise
-# The standard deviation of the noise is `sigma`, and the degrees of freedom is `nu`
-σ_true = 2.0
-ν_true = 3.0
-y = f_true + σ_true * np.random.standard_t(ν_true, size=n)
+    x,z=gen_z(n=100)
+    ax.scatter(x[:,0],x[:,1],z,c='r',label='observation data')
+    x,y=gen_y(n=100)
+    ax.scatter(x[:,0],x[:,1],y,c='b',label='model data')
+    ax.set_xlabel('X0 Label')
+    ax.set_ylabel('X1 Label')
+    ax.set_zlabel('Z Label')
+    ax.legend()
+    plt.show()
 
-## Plot the data and the unobserved latent function
-fig = plt.figure(figsize=(12,5)); ax = fig.gca()
-ax.plot(X, f_true, "dodgerblue", lw=3, label="True f");
-ax.plot(X, y, 'ok', ms=3, label="Data");
-ax.set_xlabel("X"); ax.set_ylabel("y"); plt.legend();
+def stimulation():
+    N=100
+    model=pm.Model()
+    with model:
+
+        x,z=gen_z(n=100)
+        
+        alpha = 0.1
+        ls = [0.2,0.2]
+        tau = 2.0
+        cov = tau * pm.gp.cov.RatQuad(2, ls=ls, alpha=alpha)
+        Lambda=pm.Gamma('Lambda',alpha=2,beta=0.5)
+        sigma = pm.Normal("sigma",mu=0,sd=Lambda)
+        gp = pm.gp.Marginal(cov_func=cov)
+
+        y_ = gp.marginal_likelihood("y", X=x, y=z, noise=sigma) 
+        Xnew,geny=gen_y(n=N)
+        y_star = gp.conditional("y_star", Xnew=Xnew, pred_noise=True)
+
+        mp = pm.find_MAP()
+
+    print(mp)
+    print(mp['y_star'].shape)
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+
+    # X = np.linspace(0, 1, 10)
+    # Y = np.linspace(0, 1, 10)
+    # X, Y = np.meshgrid(X, Y)
+    # Z= 1.04+3.02*X**3+2.01*Y**3+np.sin(X*Y/4)+np.random.normal(loc=0,scale=0.1,size=1)
+    # ax.plot_surface(X, Y, Z,alpha=0.5)
+    
+    x=Xnew
+    ydata=mp['y_star']
+    ax.scatter(x[:,0],x[:,1],ydata,c='r')
+
+    ax.set_xlabel('X0 Label')
+    ax.set_ylabel('X1 Label')
+    ax.set_zlabel('Z Label')
+    ax.set_title(['blue is real data,red is predict data'])
+    plt.show()
+
+if __name__=='__main__':
+    stimulation()  
+
